@@ -4,6 +4,7 @@ import requests
 from dotenv import load_dotenv
 from mongo_queries import get_customer_by_name, get_product_by_name
 from invoice_generator import create_invoice
+from invoice_parser import parse_invoice_command
 
 # Load environment variables
 load_dotenv()
@@ -11,88 +12,70 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+# In telegram_bot.py - Updated process_telegram_update function
+# telegram_bot.py (updated process_telegram_update)
 def process_telegram_update(update):
     message = update.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text", "").strip()
 
     if text.startswith("/start"):
-        send_message(chat_id, "Welcome! Use:\n/generate invoice for <customer> for <quantity> <product>")
+        send_message(chat_id, "Welcome! Use:\n/generate invoice for Customer Name: Quantity Product, ...\nExample:\n/generate invoice for Hrishita Cheema: 4 Augmentin 625 Duo Tablet, 1 Azithral 500 Tablet")
         return
 
     if text.startswith("/generate"):
         try:
-            # Improved regex pattern with better capture groups
-            pattern = re.compile(
-                r"/generate invoice for (.+?) for (\d+) (.+)$",
-                re.IGNORECASE
-            )
-            match = pattern.fullmatch(text)
+            parsed = parse_invoice_command(text)
             
-            if not match:
-                send_message(chat_id, "Invalid format. Use:\n/generate invoice for <customer> for <quantity> <product>")
-                return
+            if not parsed["customer"] or not parsed["products"]:
+                return send_message(chat_id, "❌ Invalid format. Please use:\n/generate invoice for Customer Name: Quantity Product, ...")
 
-            customer_name = match.group(1).strip()
-            quantity_str = match.group(2).strip()
-            product_name = match.group(3).strip()
+            customer_name = parsed["customer"]
+            products = parsed["products"]
 
-            print(f"\n📩 Received command:")
-            print(f"Customer: '{customer_name}'")
-            print(f"Quantity: '{quantity_str}'")
-            print(f"Product: '{product_name}'")
-
-            # Validate quantity
-            if not quantity_str.isdigit():
-                send_message(chat_id, "❌ Invalid quantity format. Please enter a number.")
-                return
-
-            quantity = int(quantity_str)
-
-            # Fetch data from MongoDB with debug logging
-            print("\n🔍 Starting database lookups...")
+            # Fetch customer
+            print(f"\n🔍 Searching for customer: {customer_name}")
             customer = get_customer_by_name(customer_name)
-            product = get_product_by_name(product_name)
-
-            print(f"\n📦 Database results:")
-            print(f"Customer found: {bool(customer)}")
-            print(f"Product found: {bool(product)}")
-
             if not customer:
-                send_message(chat_id, f"❌ Customer '{customer_name}' not found in database")
-                return
+                return send_message(chat_id, f"❌ Customer '{customer_name}' not found")
 
-            if not product:
-                send_message(chat_id, f"❌ Product '{product_name}' not found in database")
-                return
-
-            # Generate Invoice
-            try:
-                unit_price = product["unit_price"]
-                subtotal = unit_price * quantity
-                tax_rate = float(os.getenv("TAX_RATE", 18))
-                tax = (subtotal * tax_rate) / 100
-                total = subtotal + tax
-
-                pdf_filename = f"invoices/{customer_name}_invoice.pdf"
-                products_list = [{
+            # Process products
+            valid_products = []
+            missing_products = []
+            
+            for product_name, quantity in products:
+                print(f"\n🔍 Processing product: '{product_name}' (Quantity: {quantity})")
+                product = get_product_by_name(product_name)
+                
+                if not product:
+                    missing_products.append(product_name)
+                    continue
+                
+                valid_products.append({
                     "name": product["name"],
                     "quantity": quantity,
-                    "unit_price": unit_price,
-                    "subtotal": subtotal
-                }]
+                    "unit_price": product["unit_price"],
+                    "subtotal": product["unit_price"] * quantity
+                })
 
-                create_invoice(customer, products_list, total, tax, pdf_filename)
-                send_pdf(chat_id, pdf_filename)
-                print(f"\n✅ Invoice generated successfully: {pdf_filename}")
+            if missing_products:
+                return send_message(chat_id, f"❌ Products not found: {', '.join(missing_products)}")
 
-            except Exception as e:
-                print(f"❌ Invoice generation error: {str(e)}")
-                send_message(chat_id, f"⚠️ Error generating invoice: {str(e)}")
+            # Calculate totals
+            total_subtotal = sum(p["subtotal"] for p in valid_products)
+            tax_rate = float(os.getenv("TAX_RATE", 18))
+            tax = total_subtotal * tax_rate / 100
+            total = total_subtotal + tax
+
+            # Generate single PDF with all products
+            safe_name = re.sub(r'[^a-z0-9]', '_', customer_name.lower())
+            pdf_filename = f"invoices/{safe_name}_invoice.pdf"
+            create_invoice(customer, valid_products, total, tax, pdf_filename)
+            send_pdf(chat_id, pdf_filename)
 
         except Exception as e:
-            print(f"❌ Main error: {str(e)}")
-            send_message(chat_id, f"⚠️ System error: {str(e)}")
+            send_message(chat_id, f"⚠️ Error: {str(e)}")
+            print(f"System Error: {str(e)}")
 
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage"

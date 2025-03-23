@@ -15,19 +15,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # FastAPI App
 app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    RENDER_URL = os.getenv("RENDER_URL")  # Set this in Render's environment variables
-    
-    if BOT_TOKEN and RENDER_URL:
-        webhook_url = f"{RENDER_URL}/webhook"
-        response = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
-            json={"url": webhook_url}
-        )
-        print(f"Webhook set: {response.json()}")
         
 # Health Check Route
 @app.get("/")

@@ -52,31 +52,33 @@ def get_customer_by_name(original_name):
         print(f"❌ Customer search error: {str(e)}")
         return None
 
+# mongo_queries.py (updated get_product_by_name)
 def get_product_by_name(original_name):
     try:
-        # Normalize whitespace and special characters
+        # Normalize product name with flexible whitespace handling
         search_name = re.sub(r'\s+', ' ', original_name.strip())
         print(f"\n🔍 Product search for: '{original_name}' (normalized: '{search_name}')")
 
-        # Create flexible search pattern
-        pattern = re.compile(r'^\s*' + re.escape(search_name) + r'\s*$', re.IGNORECASE)
-        
-        # Search with case insensitivity and flexible whitespace
-        product = products.find_one({
-            "name": pattern
-        })
+        # Create regex pattern that matches full product name with flexible spacing
+        regex_pattern = re.compile(
+            r'^\s*' + 
+            re.escape(search_name).replace(r'\ ', r'\s+') + 
+            r'\s*$', 
+            re.IGNORECASE
+        )
+
+        product = products.find_one({"name": regex_pattern})
 
         if product:
             print(f"✅ Found product: {product['name']}")
             return {
-                "name": product["name"],  # Preserve original case from DB
+                "name": product["name"],
                 "unit_price": product.get("unit_price"),
                 "mrp": product.get("mrp"),
                 "description": product.get("description"),
                 "seller": product.get("seller")
             }
         
-        # Debug: Check first 3 product names
         print("🔎 Sample products in DB:")
         for doc in products.find().limit(3):
             print(f"- {doc.get('name')}")
